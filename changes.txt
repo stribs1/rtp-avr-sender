@@ -1,0 +1,90 @@
+claude code on the t490 made edits to this file so that its supposed to ensure the sender uses the windows secondary ethernet port as opposed to the primary one at 192.168.2.10 but multiple iterations are not working. the tray is also supposed to show which ethernet port is in use for the sender but the tray icon doesnt show that either1:40 PMThought for 6sThought for 6sThe bind to INTERFACE_IP looks correct in the code. Two likely issues:
+
+192.168.2.169 may no longer be valid — Ethernet 7 was getting that IP via DHCP from the router. Now that it's on a direct switch without the router, it may have lost that IP or gotten a different one.
+Tray title gets overwritten — the bind success message is immediately replaced by the streaming title.
+
+Check the current IP on Ethernet 7 on the Windows PC:
+cmdipconfig | findstr /A /C:"Ethernet 7" /C:"IPv4"Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+PS C:\Users\Connor> ipconfig | findstr /A /C:"Ethernet 7" /C:"IPv4"
+FINDSTR: /A ignored
+   IPv4 Address. . . . . . . . . . . : 192.168.2.10
+   IPv4 Address. . . . . . . . . . . : 192.168.56.1
+Ethernet adapter Ethernet 7:
+   IPv4 Address. . . . . . . . . . . : 192.168.2.169
+PS C:\Users\Connor>1:41 PMEthernet 7 still has 192.168.2.169. So the bind should work. Check if the sender is actually binding correctly — hover over the tray icon right after launching, does it briefly show "bound to 192.168.2.169" or does it go straight to streaming?
+Also run this on T490 to confirm packets are arriving on the right interface:
+bashsudo tcpdump -i enp0s31f6 udp port 6980 -c 10the tray icon never shows anything other than green and sending to the t490connor@connor-ThinkPad-T490:~$ sudo tcpdump -i enp0s31f6 udp port 6980 -c 10
+[sudo] password for connor:
+tcpdump: verbose output suppressed, use -v[v]... for full protocol decode
+listening on enp0s31f6, link-type EN10MB (Ethernet), snapshot length 262144 bytes
+13:41:55.501334 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501334 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501425 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501425 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501480 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501480 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501588 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.501887 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.512003 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+13:41:55.512084 IP TORRENT.56984 > vault.home.6980: UDP, length 1456
+10 packets captured
+41 packets received by filter
+0 packets dropped by kernel
+connor@connor-ThinkPad-T490:~$Show more1:42 PMPackets are arriving on the ethernet interface — that's good. But they're coming from TORRENT not from the Windows PC, which means something else is sending to port 6980. That's not VBAN traffic.
+Run the script on T490 and then recheck with the sender running:
+bashbash ~/vban-avr-10ms.sh
+Then on T490:
+bashsudo tcpdump -i enp0s31f6 udp port 6980 -c 10 -n
+The -n will show raw IPs so we can confirm the source.TORRENT is the name of the windows pc1:42 PMPackets are arriving from the Windows PC on the ethernet interface. That's exactly what we want — the direct switch path is working.
+Now check if audio is actually coming through. Is the VBAN module loaded?
+bashpw-cli list-objects | grep -i vbanconnor@connor-ThinkPad-T490:~$ pw-cli list-objects | grep -i vban
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_4"
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_0"
+                node.name = "vban_session.Stream1.192.168.2.10.63039"
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_2"
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_3"
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_5"
+                object.path = "vban_session.Stream1.192.168.2.10.63039:receive_1"1:43 PMVBAN is loaded and receiving from 192.168.2.10 — so the bind to 192.168.2.169 isn't working, it's still going out the primary NIC. But the packets ARE arriving and the module IS connected. Is there audio?yes but its bad. the packets must be sent via the secondary NIC1:43 PMThe packets are arriving but from 192.168.2.10 (primary NIC). The bind to 192.168.2.169 in the code isn't working — Windows is still routing via the primary NIC because both are on the same subnet (192.168.2.x). Windows sees both NICs on the same subnet and picks the primary one regardless of the bind.
+You need to give Ethernet 7 a different subnet. Set a static IP:
+cmdnetsh interface ip set address "Ethernet 7" static 10.0.0.1 255.255.255.0
+Then on T490 add a second IP to the ethernet interface:
+bashsudo ip addr add 10.0.0.2/24 dev enp0s31f6
+Then update INTERFACE_IP in vban_sender.py to 10.0.0.1 and TARGET_IP to 10.0.0.2, rebuild, and the traffic will be forced onto the direct path.ok, this was done on the t490:sudo ip addr add 10.0.0.2/24 dev enp0s31f6this was done on the windows machine:
+Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+PS C:\WINDOWS\system32> netsh interface ip set address "Ethernet 7" static 10.0.0.1 255.255.255.0
+PS C:\WINDOWS\system32>1:46 PMNow update vban_sender.py on Windows:
+cmdcd "C:\_Portables\_AVR Sender"
+powershell -Command "(Get-Content vban_sender.py) -replace 'TARGET_IP\s*=\s*\".*\"', 'TARGET_IP         = \"10.0.0.2\"' | Set-Content vban_sender.py"
+powershell -Command "(Get-Content vban_sender.py) -replace 'INTERFACE_IP\s*=\s*\".*\"', 'INTERFACE_IP      = \"10.0.0.1\"' | Set-Content vban_sender.py"
+Verify:
+cmdfindstr "TARGET_IP INTERFACE_IP" vban_sender.py
+Then rebuild and launch.Windows PowerShell
+Copyright (C) Microsoft Corporation. All rights reserved.
+Install the latest PowerShell for new features and improvements! https://aka.ms/PSWindows
+PS C:\WINDOWS\system32> netsh interface ip set address "Ethernet 7" static 10.0.0.1 255.255.255.0
+PS C:\WINDOWS\system32> cd "C:\_Portables\_AVR Sender"
+>> powershell -Command "(Get-Content vban_sender.py) -replace 'TARGET_IP\s*=\s*\".*\"', 'TARGET_IP         = \"10.0.0.2\"' | Set-Content vban_sender.py"
+>> powershell -Command "(Get-Content vban_sender.py) -replace 'INTERFACE_IP\s*=\s*\".*\"', 'INTERFACE_IP      = \"10.0.0.1\"' | Set-Content vban_sender.py"
+At line:2 char:80
++ ... d "(Get-Content vban_sender.py) -replace 'TARGET_IP\s*=\s*\".*\"', 'T ...
++                                                                  ~
+Missing property name after reference operator.
+At line:3 char:83
++ ... (Get-Content vban_sender.py) -replace 'INTERFACE_IP\s*=\s*\".*\"', 'I ...
++                                                                  ~
+Missing property name after reference operator.
+    + CategoryInfo          : ParserError: (:) [], ParentContainsErrorRecordException
+    + FullyQualifiedErrorId : MissingPropertyName
+PS C:\WINDOWS\system32>Show more1:46 PMJust edit the file directly in Notepad:
+cmdnotepad "C:\_Portables\_AVR Sender\vban_sender.py"
+```
+
+Change these two lines:
+```
+TARGET_IP         = "10.0.0.2"
+INTERFACE_IP      = "10.0.0.1"
+Save, then run rebuild.bat.
