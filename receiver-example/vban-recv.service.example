@@ -1,0 +1,12 @@
+# Place at: ~/.config/systemd/user/vban-recv.service
+[Unit]
+Description=RTP AVR Audio Receiver
+After=graphical-session.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=%h/rtp-avr-start.sh
+
+[Install]
+WantedBy=default.target

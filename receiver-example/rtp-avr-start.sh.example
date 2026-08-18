@@ -1,0 +1,103 @@
+#!/bin/bash
+set -euo pipefail
+
+# Startup script for the PipeWire RTP receiver side of the pipeline.
+# Machine-specific values (DRM connector, ALSA card index, PCI address) are
+# examples from the original test system — substitute your own where noted.
+
+CONF_DIR=~/.config/wireplumber/wireplumber.conf.d
+
+echo "Writing RTP receiver config..."
+mkdir -p "$CONF_DIR"
+rm -f "$CONF_DIR/52-vban-recv.conf"
+
+cat > "$CONF_DIR/52-rtp-recv.conf" << 'CONF'
+wireplumber.components = [
+{
+    name = libpipewire-module-rtp-source
+    type = pw-module
+    arguments = {
+        # NIC name — replace with yours (ip link)
+        local.ifname = enp0s31f6
+        source.ip = 10.0.0.1
+        source.port = 6980
+        rtp.framecount = 103
+        sess.latency.msec = 25.0
+        audio.format = "S16BE"
+        audio.rate = 48000
+        audio.channels = 6
+        audio.position = "[ FL, FR, RL, RR, FC, LFE ]"
+        stream.props = {
+            node.autoconnect = true
+            node.passive = false
+            # PCI address of your HDMI sink's surround profile — replace with yours
+            # (pactl list sinks short)
+            target.object = "alsa_output.pci-0000_00_1f.3.hdmi-surround"
+        }
+    }
+}
+]
+CONF
+
+# If GNOME has the HDMI output disabled, trigger a DRM hotplug detect so Mutter
+# re-evaluates monitors.xml and enables it — i915 won't push ELD until the
+# output is active.
+# NOTE: card1-HDMI-A-2 is this test system's DRM connector name — yours may
+# differ (check: ls /sys/class/drm/ for your cardN-HDMI-A-N path).
+HDMI_WAS_DISABLED=0
+if [ "$(cat /sys/class/drm/card1-HDMI-A-2/enabled 2>/dev/null)" != "enabled" ]; then
+    echo "HDMI-2 output disabled — triggering hotplug detect..."
+    sudo /usr/local/bin/hdmi-force-detect
+    sleep 3
+    HDMI_WAS_DISABLED=1
+fi
+
+# After a force-detect, Mutter needs time to re-enable the output and i915 to read ELD —
+# use the long wait regardless of uptime. Otherwise fail fast on manual runs.
+UPTIME_S=$(awk '{print int($1)}' /proc/uptime)
+if [ "$UPTIME_S" -le 120 ] || [ "$HDMI_WAS_DISABLED" = "1" ]; then
+    ELD_WAIT=90   # early boot or post-force-detect — wait up to 45s
+else
+    ELD_WAIT=10   # manual run, HDMI already enabled — fail fast
+fi
+
+echo "Waiting for HDMI audio ELD (up to $((ELD_WAIT / 2))s)..."
+ELD_READY=0
+for i in $(seq 1 "$ELD_WAIT"); do
+    # card0 is this test system's ALSA card index for the HDMI audio device —
+    # yours may differ (check: aplay -l)
+    grep -qlP 'monitor_present\s+1' /proc/asound/card0/eld#* 2>/dev/null && ELD_READY=1 && break
+    sleep 0.5
+done
+
+echo "Restarting WirePlumber..."
+systemctl --user restart wireplumber
+# If ELD failed, give WirePlumber only 5s — port 6980 won't bind without HDMI surround.
+if [ "$ELD_READY" = "1" ]; then
+    echo "ELD populated — switching to HDMI surround"
+    # PCI address — replace with yours (pactl list cards)
+    pactl set-card-profile alsa_card.pci-0000_00_1f.3 output:hdmi-surround || true
+else
+    echo "WARNING: ELD not populated after 45s — staying on analog"
+fi
+
+echo "Ensuring PulseAudio bridge is running..."
+systemctl --user start pipewire-pulse.socket pipewire-pulse
+
+RTP_WAIT=$([ "$ELD_READY" = "1" ] && echo 60 || echo 10)
+for i in $(seq 1 "$RTP_WAIT"); do
+    ss -uanp | grep -q ":6980" && break
+    sleep 0.5
+done
+
+if ss -uanp | grep -q ":6980"; then
+    echo "RTP listener active on port 6980"
+    notify-send "AVR Audio" "5.1 RTP stream active" --icon=audio-speakers 2>/dev/null || true
+else
+    echo "WARNING: RTP listener not found on port 6980!"
+    exit 1
+fi
+
+# card0 — replace with yours if different (amixer -c 0 scontrols to check)
+amixer -c 0 sset 'IEC958' on 2>/dev/null || true
+echo "Done. Switch Windows sender to rtp_sender.exe (git rtp-sender branch)."

@@ -1,0 +1,8 @@
+#!/bin/bash
+# Install at: /usr/local/bin/hdmi-force-detect (root:root, 755)
+# Forces a DRM hotplug re-detect on the HDMI connector so Mutter/i915
+# re-reads ELD after the output has been disabled/idle.
+#
+# card1-HDMI-A-2 is this test system's DRM connector — yours may differ.
+# Find your connector name: ls /sys/class/drm/ | grep HDMI
+echo detect > /sys/class/drm/card1-HDMI-A-2/status

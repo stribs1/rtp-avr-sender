@@ -1,0 +1,36 @@
+# WirePlumber config for PipeWire's built-in RTP receiver.
+# Place at: ~/.config/wireplumber/wireplumber.conf.d/52-rtp-recv.conf
+#
+# Values below are machine-specific examples from the original test system —
+# substitute your own before use (see inline comments).
+
+wireplumber.components = [
+{
+    name = libpipewire-module-rtp-source
+    type = pw-module
+    arguments = {
+        # Wired NIC the RTP stream arrives on. Find yours with: ip link
+        local.ifname = enp0s31f6
+
+        # IP of the sending machine (Windows PC on the dedicated NIC link)
+        source.ip = 10.0.0.1
+        source.port = 6980
+
+        rtp.framecount = 103
+        sess.latency.msec = 25.0
+        audio.format = "S16BE"
+        audio.rate = 48000
+        audio.channels = 6
+        audio.position = "[ FL, FR, RL, RR, FC, LFE ]"
+        stream.props = {
+            node.autoconnect = true
+            node.passive = false
+
+            # PCI address of your HDMI audio device's surround profile.
+            # Find yours with: pactl list sinks short
+            # (PCI address varies per machine/motherboard)
+            target.object = "alsa_output.pci-0000_00_1f.3.hdmi-surround"
+        }
+    }
+}
+]

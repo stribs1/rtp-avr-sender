@@ -1,0 +1,12 @@
+# Place at: ~/.config/systemd/user/rtp-watchdog.service
+[Unit]
+Description=RTP AVR Audio Watchdog — reinit AVR when Windows streams to analog sink
+After=graphical-session.target
+
+[Service]
+ExecStart=%h/rtp-watchdog.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target
