@@ -108,6 +108,12 @@ def stream_thread(tray_icon):
 
     capture_ch = int(dev['maxInputChannels'])
 
+    # Precompute struct formats and zero-pad — these are constant for the session
+    _pack_in   = struct.Struct(f'<{SAMPLES_PER_FRAME * capture_ch}h')
+    _pack_in6  = struct.Struct(f'<{SAMPLES_PER_FRAME * 6}h')
+    _pack_out  = struct.Struct(f'>{SAMPLES_PER_FRAME * CHANNELS}h')
+    _zero_pad  = [0] * (CHANNELS - capture_ch) if capture_ch < CHANNELS else []
+
     # RTP session state — randomised at stream start per RFC 3550
     ssrc   = SSRC
     seq    = [random.randint(0, 0xFFFF)]
@@ -133,19 +139,17 @@ def stream_thread(tray_icon):
                 pass
 
         if capture_ch < CHANNELS:
-            src = list(struct.unpack(f'<{SAMPLES_PER_FRAME * capture_ch}h', in_data))
+            src = list(_pack_in.unpack(in_data))
             dst = []
             for i in range(SAMPLES_PER_FRAME):
                 frame_s = src[i * capture_ch:(i + 1) * capture_ch]
-                frame_s += [0] * (CHANNELS - capture_ch)
+                frame_s += _zero_pad
                 dst.extend(frame_s)
-            # RTP L16: big-endian
-            pcm_data = struct.pack(f'>{SAMPLES_PER_FRAME * CHANNELS}h', *dst)
+            pcm_data = _pack_out.pack(*dst)
         else:
             # Reorder 6ch using precomputed index table, then pack big-endian for RTP L16
-            samples  = struct.unpack(f'<{SAMPLES_PER_FRAME * 6}h', in_data)
-            pcm_data = struct.pack(f'>{SAMPLES_PER_FRAME * 6}h',
-                                   *[samples[i] for i in _REORDER_IDX])
+            samples  = _pack_in6.unpack(in_data)
+            pcm_data = _pack_out.pack(*[samples[i] for i in _REORDER_IDX])
 
         rms = audioop.rms(in_data, 2)
         if rms > max_rms[0]:
@@ -184,11 +188,12 @@ def stream_thread(tray_icon):
     tray_icon.icon  = make_icon("green")
     tray_icon.title = f"RTP Sender — Streaming to {TARGET_IP}:{TARGET_PORT}"
 
-    gc.disable()  # prevent GC pauses from stalling the audio callback thread
+    gc.disable()  # prevent GC pauses mid-callback; we collect manually between sleeps
     stream.start_stream()
     try:
         while stream.is_active() and not stop_event.is_set():
             time.sleep(0.1)
+            gc.collect(0)  # reclaim any cycles before they accumulate; gen-0 only to avoid GIL stalls on the audio callback thread
     finally:
         stream.stop_stream()
         stream.close()
