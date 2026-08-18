@@ -66,7 +66,7 @@ def stream_thread(tray_icon):
     import ctypes
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        sock.bind((INTERFACE_IP, 0))
+        sock.bind((INTERFACE_IP, TARGET_PORT))
     except Exception as e:
         tray_icon.title = f"RTP Sender — BIND FAILED: {e}"
         tray_icon.icon  = make_icon("red")
