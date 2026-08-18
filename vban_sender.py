@@ -28,6 +28,7 @@ SAMPLE_RATE       = 48000
 SAMPLES_PER_FRAME = 103          # ~2.15ms per packet at 48kHz (matches PipeWire rtp-source internal ptime)
 INTERFACE_IP      = "10.0.0.1"  # Force RTP out this NIC
 RTP_PAYLOAD_TYPE  = 96           # dynamic PT, S16BE 6ch 48kHz
+SSRC              = 0x4156524F   # fixed — rtp-source locks onto first SSRC and rejects changes
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Precomputed channel reorder: Windows (FL FR FC LFE RL RR) → PipeWire (FL FR RL RR FC LFE)
@@ -108,7 +109,7 @@ def stream_thread(tray_icon):
     capture_ch = int(dev['maxInputChannels'])
 
     # RTP session state — randomised at stream start per RFC 3550
-    ssrc   = random.randint(0, 0xFFFFFFFF)
+    ssrc   = SSRC
     seq    = [random.randint(0, 0xFFFF)]
     rtp_ts = [random.randint(0, 0xFFFFFFFF)]
 
