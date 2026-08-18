@@ -25,7 +25,7 @@ TARGET_PORT       = 6980
 CAPTURE_DEVICE    = "CABLE Input"
 CHANNELS          = 6
 SAMPLE_RATE       = 48000
-SAMPLES_PER_FRAME = 240          # 5ms per packet at 48kHz
+SAMPLES_PER_FRAME = 103          # ~2.15ms per packet at 48kHz (matches PipeWire rtp-source internal ptime)
 INTERFACE_IP      = "10.0.0.1"  # Force RTP out this NIC
 RTP_PAYLOAD_TYPE  = 96           # dynamic PT, S16BE 6ch 48kHz
 # ─────────────────────────────────────────────────────────────────────────────
