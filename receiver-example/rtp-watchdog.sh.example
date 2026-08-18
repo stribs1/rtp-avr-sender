@@ -1,0 +1,35 @@
+#!/bin/bash
+# Reinit AVR audio when Windows is actively streaming but PipeWire fell back to analog.
+# Trigger: rtp-source socket ESTAB (packets arriving) + default sink is analog-stereo.
+#
+# card0 and card1-HDMI-A-2 below are this test system's ALSA card index and
+# DRM connector name — yours may differ (see comments at each use).
+
+POLL=15
+
+packets_incoming() {
+    ss -uanp 2>/dev/null | grep "6980" | grep -q "ESTAB"
+}
+
+on_analog() {
+    pactl info 2>/dev/null | grep -q "Default Sink:.*analog-stereo"
+}
+
+eld_present() {
+    # card0 — replace with your ALSA card index (aplay -l)
+    grep -qlP 'monitor_present\s+1' /proc/asound/card0/eld#* 2>/dev/null
+}
+
+hdmi_disabled() {
+    # card1-HDMI-A-2 — replace with your DRM connector (ls /sys/class/drm/ | grep HDMI)
+    [ "$(cat /sys/class/drm/card1-HDMI-A-2/enabled 2>/dev/null)" != "enabled" ]
+}
+
+while true; do
+    sleep "$POLL"
+    if packets_incoming && on_analog && { eld_present || hdmi_disabled; }; then
+        logger -t rtp-watchdog "Windows streaming, audio on analog (eld=$(eld_present && echo 1 || echo 0) hdmi_disabled=$(hdmi_disabled && echo 1 || echo 0)) — reinitializing AVR"
+        ~/rtp-avr-start.sh 2>&1 | logger -t rtp-watchdog
+        sleep 30
+    fi
+done
